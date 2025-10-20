@@ -1,0 +1,7 @@
+__pycache__/
+downloads/
+instagram_downloads/
+video_instagram/
+*.txt
+cookies.txt
+.env
