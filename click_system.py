@@ -5,12 +5,43 @@ from dataclasses import dataclass, asdict
 import logging
 from selenium.webdriver.common.by import By
 import pyperclip
-
-
-
 from pynput import keyboard, mouse
+import datetime
+
+try:
+    from screeninfo import get_monitors
+    SCREENINFO_AVAILABLE = True
+except ImportError:
+    SCREENINFO_AVAILABLE = False
+    print("⚠️ screeninfo not available. Install with: pip install screeninfo")
 
 ACTIONS_FILE = Path("actions.json")
+
+def get_screen_resolution():
+    """
+    Get the primary screen resolution.
+    Returns (width, height) tuple.
+    Falls back to None if detection fails.
+    """
+    if not SCREENINFO_AVAILABLE:
+        return None
+    
+    try:
+        monitors = get_monitors()
+        if monitors:
+            # Use primary monitor (first one)
+            primary = monitors[0]
+            return (primary.width, primary.height)
+    except Exception as e:
+        print(f"⚠️ Could not detect screen resolution: {e}")
+    
+    return None
+@dataclass
+class RecordingMetadata:
+    """Metadata about the recording session"""
+    resolution: dict  # {"width": int, "height": int}
+    version: str      # Format version for future compatibility
+
 
 @dataclass
 class Event:
@@ -25,6 +56,10 @@ class Macro:
         self.paused = False
         self.should_stop = False
         self._keyboard_listener = None
+        self.recording_metadata: RecordingMetadata = None
+        self.resolution_transform = None  # (x_ratio, y_ratio) for.
+        self.cached_resolution = None  # Cache screen resolution to avoid repeated queries
+
 
     def _setup_global_hotkeys(self):
         """Setup global hotkey listener"""
@@ -38,6 +73,71 @@ class Macro:
             
         self._keyboard_listener = keyboard.Listener(on_press=on_press)
         self._keyboard_listener.start()
+
+        # ------------------------
+    # RESOLUTION ADAPTATION
+    # ------------------------
+    def _calculate_transform_ratios(self, recorded_res, current_res):
+        """
+        Calculate coordinate transformation ratios.
+        Returns (x_ratio, y_ratio) for scaling coordinates.
+        """
+        if not recorded_res or not current_res:
+            return (1.0, 1.0)  # No transformation
+        
+        rec_width = recorded_res.get('width', 0)
+        rec_height = recorded_res.get('height', 0)
+        cur_width, cur_height = current_res
+        
+        # Prevent division by zero
+        if rec_width == 0 or rec_height == 0:
+            return (1.0, 1.0)
+        
+        x_ratio = cur_width / rec_width
+        y_ratio = cur_height / rec_height
+        
+        return (x_ratio, y_ratio)
+    
+    def _transform_coordinates(self, x, y, x_ratio, y_ratio):
+        """
+        Apply coordinate transformation with bounds checking.
+        Returns (x_new, y_new) as integers.
+        """
+        x_new = round(x * x_ratio)
+        y_new = round(y * y_ratio)
+        
+        # Use cached screen bounds for clamping (avoid repeated queries)
+        if self.cached_resolution:
+            max_x, max_y = self.cached_resolution
+            x_new = max(0, min(x_new, max_x - 1))
+            y_new = max(0, min(y_new, max_y - 1))
+        
+        return (x_new, y_new)
+    
+    def get_resolution_info(self):
+        """
+        Get diagnostic information about resolution and transformation.
+        Returns dict with current, recorded, and transformation info.
+        """
+        current_res = get_screen_resolution()
+        info = {
+            'current_resolution': current_res,
+            'recorded_resolution': None,
+            'transform_ratios': None,
+            'transformation_active': False
+        }
+        
+        if self.recording_metadata and self.recording_metadata.resolution:
+            info['recorded_resolution'] = self.recording_metadata.resolution
+            if current_res:
+                ratios = self._calculate_transform_ratios(
+                    self.recording_metadata.resolution,
+                    current_res
+                )
+                info['transform_ratios'] = {'x_ratio': ratios[0], 'y_ratio': ratios[1]}
+                info['transformation_active'] = (ratios != (1.0, 1.0))
+        
+        return info
 
     # ------------------------
     # REGISTRAZIONE
@@ -82,10 +182,37 @@ class Macro:
             while not stop_flag["stop"]:
                 time.sleep(0.01)
 
-        # Salva
-        payload = [asdict(e) for e in self.events]
-        self.file.write_text(json.dumps(payload, indent=2))
-        print(f"✅ SALVATE {len(self.events)} azioni in {self.file.resolve()}")
+        # Capture screen resolution
+        screen_res = get_screen_resolution()
+        if screen_res:
+            print(f"📐 Screen resolution: {screen_res[0]}x{screen_res[1]}")
+            self.recording_metadata = RecordingMetadata(
+                resolution={'width': screen_res[0], 'height': screen_res[1]},
+                version="2.0"
+            )
+        else:
+            print("⚠️ Could not detect screen resolution - recording without metadata")
+            self.recording_metadata = None
+        # Save with metadata (new format) or fallback to old format
+        try:
+            if self.recording_metadata:
+                # New format with metadata
+                payload = {
+                    'metadata': asdict(self.recording_metadata),
+                    'events': [asdict(e) for e in self.events]
+                }
+            else:
+                # Old format (backward compatibility)
+                payload = [asdict(e) for e in self.events]
+            
+            self.file.write_text(json.dumps(payload, indent=2))
+            print(f"✅ SALVATE {len(self.events)} azioni in {self.file.resolve()}")
+        except Exception as e:
+            print(f"❌ Errore salvataggio: {e}")
+            # Fallback to old format
+            payload = [asdict(e) for e in self.events]
+            self.file.write_text(json.dumps(payload, indent=2))
+            print(f"✅ SALVATE {len(self.events)} azioni (formato legacy)")
 
     # ------------------------
     # REPLAY
@@ -97,7 +224,34 @@ class Macro:
 
         # Carica eventi
         raw = json.loads(self.file.read_text())
-        self.events = [Event(e["t"], e["type"], e["data"]) for e in raw]
+        
+        # Check if new format (with metadata) or old format (array)
+        if isinstance(raw, dict) and 'metadata' in raw and 'events' in raw:
+            # New format with metadata
+            self.recording_metadata = RecordingMetadata(**raw['metadata'])
+            self.events = [Event(e["t"], e["type"], e["data"]) for e in raw['events']]
+            print(f"📐 Recorded at: {self.recording_metadata.resolution['width']}x{self.recording_metadata.resolution['height']}")
+        else:
+            # Old format (backward compatibility)
+            self.events = [Event(e["t"], e["type"], e["data"]) for e in raw]
+            self.recording_metadata = None
+            print("⚠️ Old format detected (no resolution metadata)")
+        
+        # Calculate transformation ratios and cache current resolution
+        current_res = get_screen_resolution()
+        self.cached_resolution = current_res  # Cache to avoid repeated queries
+        if current_res and self.recording_metadata:
+            self.resolution_transform = self._calculate_transform_ratios(
+                self.recording_metadata.resolution,
+                current_res
+            )
+            if self.resolution_transform != (1.0, 1.0):
+                print(f"📐 Current resolution: {current_res[0]}x{current_res[1]}")
+                print(f"🔄 Applying coordinate transformation: x×{self.resolution_transform[0]:.3f}, y×{self.resolution_transform[1]:.3f}")
+            else:
+                print(f"✅ Resolution match - no transformation needed")
+        else:
+            self.resolution_transform = (1.0, 1.0)
         if not self.events:
             print("❌ File vuoto.")
             return
@@ -135,16 +289,19 @@ class Macro:
                 elif e.type == "k_up":
                     self._key_action(kb, e.data["key"], down=False)
                 elif e.type == "m_move":
-                    ms.position = (e.data["x"], e.data["y"])
+                    x, y = self._transform_coordinates(e.data["x"], e.data["y"], *self.resolution_transform)
+                    ms.position = (x, y)
                 elif e.type == "m_down":
-                    ms.position = (e.data["x"], e.data["y"])
+                    x, y = self._transform_coordinates(e.data["x"], e.data["y"], *self.resolution_transform)
+                    ms.position = (x, y)
                     ms.press(self._mouse_button(e.data["button"]))
                 elif e.type == "m_up":
-                    ms.position = (e.data["x"], e.data["y"])
+                    x, y = self._transform_coordinates(e.data["x"], e.data["y"], *self.resolution_transform)
+                    ms.position = (x, y)
                     ms.release(self._mouse_button(e.data["button"]))
                 elif e.type == "m_scroll":
-                    ms.position = (e.data["x"], e.data["y"])
-                    # su macOS dy>0 è su; su Windows/Linux idem
+                    x, y = self._transform_coordinates(e.data["x"], e.data["y"], *self.resolution_transform)
+                    ms.position = (x, y)
                     ms.scroll(e.data["dx"], e.data["dy"])
         finally:
             esc_listener.stop()
@@ -177,10 +334,40 @@ class Macro:
         try:
             raw_data = json.loads(json_file.read_text())
             
+            # Check if new format (with metadata) or old format (array)
+            if isinstance(raw_data, dict) and 'metadata' in raw_data and 'events' in raw_data:
+                # New format with metadata
+                self.recording_metadata = RecordingMetadata(**raw_data['metadata'])
+                print(f"📐 Recorded at: {self.recording_metadata.resolution['width']}x{self.recording_metadata.resolution['height']}")
+                # Use events from metadata format
+                events_data = raw_data['events']
+            else:
+                # Old format (backward compatibility) or verbose format
+                self.recording_metadata = None
+                events_data = raw_data
+            
+            # Calculate transformation ratios and cache current resolution
+            current_res = get_screen_resolution()
+            self.cached_resolution = current_res  # Cache to avoid repeated queries
+            if current_res and self.recording_metadata:
+                self.resolution_transform = self._calculate_transform_ratios(
+                    self.recording_metadata.resolution,
+                    current_res
+                )
+                if self.resolution_transform != (1.0, 1.0):
+                    print(f"📐 Current resolution: {current_res[0]}x{current_res[1]}")
+                    print(f"🔄 Applying coordinate transformation: x×{self.resolution_transform[0]:.3f}, y×{self.resolution_transform[1]:.3f}")
+                else:
+                    print(f"✅ Resolution match - no transformation needed")
+            else:
+                self.resolution_transform = (1.0, 1.0)
+                if not self.recording_metadata:
+                    print("⚠️ Old format detected (no resolution metadata)")
+            
             # AUTO-CONVERSIONE: rileva e converte formato verbose
-            if self._is_verbose_format(raw_data):
-                print(f"🔄 Rilevato formato verbose, comprimendo {len(raw_data)} eventi...")
-                compressed_data = self._auto_compress_verbose(raw_data)
+            if self._is_verbose_format(events_data):
+                print(f"🔄 Rilevato formato verbose, comprimendo {len(events_data)} eventi...")
+                compressed_data = self._auto_compress_verbose(events_data)
                 print(f"✅ Compressi in {len(compressed_data)} azioni")
                 
                 # Converti in Event objects
@@ -217,7 +404,7 @@ class Macro:
                         self.events.append(Event(item['t'], item['type'], item['data']))
             else:
                 # Formato normale
-                self.events = [Event(e["t"], e["type"], e["data"]) for e in raw_data]
+                self.events = [Event(e["t"], e["type"], e["data"]) for e in events_data]
                 
         except Exception as e:
             print(f"❌ Errore caricamento file {json_file}: {e}")
@@ -361,15 +548,19 @@ class Macro:
                 elif e.type == "k_up":
                     self._key_action(kb, e.data["key"], down=False)
                 elif e.type == "m_move":
-                    ms.position = (e.data["x"], e.data["y"])
+                    x, y = self._transform_coordinates(e.data["x"], e.data["y"], *self.resolution_transform)
+                    ms.position = (x, y)
                 elif e.type == "m_down":
-                    ms.position = (e.data["x"], e.data["y"])
+                    x, y = self._transform_coordinates(e.data["x"], e.data["y"], *self.resolution_transform)
+                    ms.position = (x, y)
                     ms.press(self._mouse_button(e.data["button"]))
                 elif e.type == "m_up":
-                    ms.position = (e.data["x"], e.data["y"])
+                    x, y = self._transform_coordinates(e.data["x"], e.data["y"], *self.resolution_transform)
+                    ms.position = (x, y)
                     ms.release(self._mouse_button(e.data["button"]))
                 elif e.type == "m_scroll":
-                    ms.position = (e.data["x"], e.data["y"])
+                    x, y = self._transform_coordinates(e.data["x"], e.data["y"], *self.resolution_transform)
+                    ms.position = (x, y)
                     ms.scroll(e.data["dx"], e.data["dy"])
 
                 # Add pause check after each action
@@ -998,7 +1189,7 @@ def main():
     p = argparse.ArgumentParser(description="Registro e replay macro tastiera/mouse")
     p.add_argument("mode", choices=["record", "replay"], help="record o replay")
     p.add_argument("--file", default="actions.json", help="file JSON delle azioni")
-    p.add_argument("--speed", type=float, default=2.0, help="velocità replay (2.0 = doppia)")
+    p.add_argument("--speed", type=float, default=1.0, help="velocità replay (2.0 = doppia)")
     args = p.parse_args()
 
     m = Macro(args.file)

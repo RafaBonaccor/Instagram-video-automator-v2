@@ -194,13 +194,13 @@ async def start_instagram_editing(number_to_download: str):
 
     logger.info("📝 Running Canva download macro")
     macro.replay_with_markers(speed=1.0,actions_file="download_from_canva.json")
-    time.sleep(120)
+    time.sleep(30)
 
 
 
     logger.info("📝 Running Instagram upload")
     macro.replay_with_markers( marker_texts={"<f2>" : descrizione }, speed=0.5,actions_file="instagram_upload.json")
-    time.sleep(120)
+    time.sleep(30)
 
     # Update the JSON file with extracted URLs
 
