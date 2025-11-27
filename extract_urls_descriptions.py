@@ -131,7 +131,7 @@ async def extract_url_description(number_to_download: str):
     extracted_urls = []
 
 
-    instagram_saved_path = "https://www.instagram.com/la_veritas_news/saved/all-posts/"
+    instagram_saved_path = "https://www.instagram.com/littl.ellie/saved/all-posts/"
     macro.replay_with_markers(
         marker_texts={
             "<f2>": (instagram_saved_path),

@@ -59,6 +59,8 @@ class Macro:
         self.recording_metadata: RecordingMetadata = None
         self.resolution_transform = None  # (x_ratio, y_ratio) for.
         self.cached_resolution = None  # Cache screen resolution to avoid repeated queries
+        self.editor_requested = False  # Flag for F9 editor request
+        self.current_replay_idx = 0  # Current position in replay (for jumping)
 
 
     def _setup_global_hotkeys(self):
@@ -70,6 +72,10 @@ class Macro:
             elif key == keyboard.Key.f7:
                 self.paused = not self.paused
                 print("⏯️ Replay " + ("paused" if self.paused else "resumed"))
+            elif key == keyboard.Key.f9:
+                self.paused = True
+                self.editor_requested = True
+                print("✏️ Opening editor...")
             
         self._keyboard_listener = keyboard.Listener(on_press=on_press)
         self._keyboard_listener.start()
@@ -273,10 +279,37 @@ class Macro:
         last_t = 0.0
 
         try:
-            for e in self.events:
+            for i, e in enumerate(self.events):
+                # Handle jump from editor
+                if i < self.current_replay_idx:
+                    continue  # Skip events before jump point
+                
                 if stop_flag["stop"]:
                     print("⏹️ Replay interrotto.")
                     break
+                
+                # Check for editor request (F9)
+                if self.editor_requested:
+                    self.editor_requested = False
+                    old_idx = self.current_replay_idx
+                    try:
+                        from replay_editor import ReplayEditor
+                        editor = ReplayEditor(self, current_event_idx=i)
+                        editor.show()  # Blocks until closed
+                        if editor.modified:
+                            print("✅ Changes applied, continuing replay...")
+                        # Check if user requested jump
+                        if self.current_replay_idx != old_idx:
+                            print(f"⏩ Jumping from event {i} to event {self.current_replay_idx}")
+                            # Reset timing for smooth continuation
+                            if self.current_replay_idx < len(self.events):
+                                last_t = self.events[self.current_replay_idx].t
+                            continue
+                    except Exception as e:
+                        print(f"❌ Editor error: {e}")
+                        import traceback
+                        traceback.print_exc()
+                
                 # rispetta le tempistiche relative (con fattore speed)
                 delay = max(0.0, (e.t - last_t) / max(1e-6, speed))
                 if delay > 0:
@@ -438,11 +471,37 @@ class Macro:
         last_t = 0.0
 
         try:
-            for e in self.events:
+            for i, e in enumerate(self.events):
+                # Handle jump from editor
+                if i < self.current_replay_idx:
+                    continue  # Skip events before jump point
+                
                 # Check for stop signal
                 if self.should_stop:
                     print("⏹️ Replay stopped with F5")
                     break
+                
+                # Check for editor request (F9)
+                if self.editor_requested:
+                    self.editor_requested = False
+                    old_idx = self.current_replay_idx
+                    try:
+                        from replay_editor import ReplayEditor
+                        editor = ReplayEditor(self, current_event_idx=i)
+                        editor.show()  # Blocks until closed
+                        if editor.modified:
+                            print("✅ Changes applied, continuing replay...")
+                        # Check if user requested jump
+                        if self.current_replay_idx != old_idx:
+                            print(f"⏩ Jumping from event {i} to event {self.current_replay_idx}")
+                            # Reset timing for smooth continuation
+                            if self.current_replay_idx < len(self.events):
+                                last_t = self.events[self.current_replay_idx].t
+                            continue
+                    except Exception as e:
+                        print(f"❌ Editor error: {e}")
+                        import traceback
+                        traceback.print_exc()
                 
                 # Check and handle pause
                 while self.paused:

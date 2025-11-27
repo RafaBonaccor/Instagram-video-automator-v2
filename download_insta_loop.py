@@ -160,13 +160,7 @@ async def start_instagram_editing(number_to_download: str):
     extracted_urls = []
 
 
-    instagram_saved_path = "https://www.instagram.com/la_veritas_news/saved/all-posts/"
-    macro.replay_with_markers(
-        marker_texts={
-        },
-        speed=1.0,
-        actions_file="canva_opener.json"
-    )
+
 
     event_id = f"EDIT_CANVA_{int(time.time())}"
     url= "https://discordapp.com/api/webhooks/1428453862745968770/gk9gkmUPmtcNWx6F7hXtGC8ICu1PpodhvEP2REwm3LCw_yfQBNL3LnEB6J_QksOxd6cH"
@@ -192,9 +186,7 @@ async def start_instagram_editing(number_to_download: str):
         logger.warning(f"⚠️ Errore nel recupero descrizione. Usata default: {e}")
 
 
-    logger.info("📝 Running Canva download macro")
-    macro.replay_with_markers(speed=1.0,actions_file="download_from_canva.json")
-    time.sleep(30)
+
 
 
 
