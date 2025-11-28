@@ -8,6 +8,7 @@ import re
 from datetime import datetime
 import glob
 from click_system import Macro
+from file_manager import FileManager
 import time
 import random
 import win32clipboard
@@ -131,13 +132,13 @@ async def extract_url_description(number_to_download: str):
     extracted_urls = []
 
 
-    instagram_saved_path = "https://www.instagram.com/littl.ellie/saved/all-posts/"
+    instagram_saved_path = "https://www.instagram.com/la_veritas_news/saved/all-posts/"
     macro.replay_with_markers(
         marker_texts={
             "<f2>": (instagram_saved_path),
         },
         speed=1.0,
-        actions_file="navigate_to_instagram.json"
+        actions_file=FileManager.get_replay_path("navigate_to_instagram.json")
     )
         # Loop for the number of times specified in number_to_download
     for _ in range(number_to_download):
@@ -157,7 +158,7 @@ async def extract_url_description(number_to_download: str):
 
                     },
                     speed=1.0,
-                    actions_file="extract_urls.json"
+                    actions_file=FileManager.get_replay_path("extract_urls.json")
                 )
 
                 time.sleep(3)
@@ -183,7 +184,7 @@ async def extract_url_description(number_to_download: str):
             logger.error("❌ Error in url extraction: %s", e)
 
     # Update the JSON file with extracted URLs
-    json_file_path = "instagram_urls.json"
+    json_file_path = FileManager.INSTAGRAM_URLS
     try:
         with open(json_file_path, 'r+', encoding='utf-8') as f:
             data = json.load(f)

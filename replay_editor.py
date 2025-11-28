@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Optional, List
 from replay_index import ReplayIndex, ActionEvent
+from file_manager import FileManager
 
 
 class ReplayEditor:
@@ -81,6 +82,29 @@ class ReplayEditor:
     
     def _build_ui(self):
         """Build the user interface"""
+        # File selector
+        file_frame = ttk.Frame(self.window, padding="5")
+        file_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(file_frame, text="📁 Replay File:", 
+                 font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=5)
+        
+        # Dropdown with available files
+        self.file_var = tk.StringVar(value=self.macro.file.name)
+        files = FileManager.list_replay_files()
+        self.file_dropdown = ttk.Combobox(file_frame, textvariable=self.file_var, 
+                                          values=files, width=35, state='readonly')
+        self.file_dropdown.pack(side=tk.LEFT, padx=5)
+        self.file_dropdown.bind('<<ComboboxSelected>>', self._on_file_change)
+        
+        # Browse button
+        ttk.Button(file_frame, text="Browse...", 
+                  command=self._browse_file, width=10).pack(side=tk.LEFT, padx=2)
+        
+        # Reload button
+        ttk.Button(file_frame, text="↻", 
+                  command=self._reload_file, width=3).pack(side=tk.LEFT, padx=2)
+        
         # Top: Statistics and current position
         top_frame = ttk.Frame(self.window, padding="10")
         top_frame.pack(fill=tk.X)
@@ -336,6 +360,73 @@ class ReplayEditor:
         self.window.destroy()
         
         print(f"▶️ Jumping to event #{self.selected_action_idx} and resuming...")
+    
+    def _on_file_change(self, event=None):
+        """Handle file selection change from dropdown"""
+        selected = self.file_var.get()
+        new_file = FileManager.get_replay_path(selected)
+        self._load_file(new_file)
+    
+    def _browse_file(self):
+        """Open file browser to select JSON file"""
+        from tkinter import filedialog
+        filename = filedialog.askopenfilename(
+            title="Select Replay File",
+            initialdir=FileManager.REPLAY_DIR,
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if filename:
+            self._load_file(Path(filename))
+    
+    def _reload_file(self):
+        """Reload current file"""
+        self._load_file(self.macro.file)
+    
+    def _load_file(self, filepath):
+        """Load a different replay file"""
+        try:
+            # Load new file into macro
+            raw = json.loads(filepath.read_text())
+            
+            # Parse format
+            if isinstance(raw, dict) and 'metadata' in raw and 'events' in raw:
+                from click_system import RecordingMetadata, Event
+                self.macro.recording_metadata = RecordingMetadata(**raw['metadata'])
+                self.macro.events = [Event(e["t"], e["type"], e["data"]) 
+                                    for e in raw['events']]
+            else:
+                from click_system import Event
+                self.macro.events = [Event(e["t"], e["type"], e["data"]) 
+                                    for e in raw]
+                self.macro.recording_metadata = None
+            
+            # Update file reference
+            self.macro.file = filepath
+            
+            # Rebuild index
+            self.index = ReplayIndex(self.macro.events)
+            
+            # Update UI
+            self.file_var.set(filepath.name)
+            self._populate_event_list()
+            self._update_stats()
+            
+            print(f"✅ Loaded {filepath.name} ({len(self.macro.events)} events)")
+            
+        except Exception as e:
+            messagebox.showerror("Load Error", f"Failed to load file: {e}")
+    
+    def _update_stats(self):
+        """Update statistics label"""
+        stats = self.index.get_statistics()
+        current_time = self.macro.events[self.current_idx].t if self.current_idx < len(self.macro.events) else 0
+        
+        self.stats_label.config(
+            text=f"📊 Total: {stats['total_events']} events | "
+                 f"Actions: {stats['action_events']} | "
+                 f"Moves: {stats['total_moves']} | "
+                 f"⏱️ Current: {current_time:.2f}s (Event #{self.current_idx})"
+        )
     
     def _insert_before(self):
         """Insert new event before selected"""

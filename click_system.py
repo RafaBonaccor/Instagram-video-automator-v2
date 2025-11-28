@@ -7,6 +7,7 @@ from selenium.webdriver.common.by import By
 import pyperclip
 from pynput import keyboard, mouse
 import datetime
+from file_manager import FileManager
 
 try:
     from screeninfo import get_monitors
@@ -15,7 +16,7 @@ except ImportError:
     SCREENINFO_AVAILABLE = False
     print("⚠️ screeninfo not available. Install with: pip install screeninfo")
 
-ACTIONS_FILE = Path("actions.json")
+ACTIONS_FILE = FileManager.DEFAULT_REPLAY
 
 def get_screen_resolution():
     """

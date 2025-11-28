@@ -2,6 +2,7 @@ from instagram_download import InstagramDownloader  # Assicurati che il nome sia
 from extract_urls_descriptions import extract_url_description
 import json
 from download_insta_loop import start_instagram_editing
+from file_manager import FileManager
 import asyncio
 import sys
 import time
@@ -9,7 +10,7 @@ import time
 
 if __name__ == "__main__":
     print("########################## Avvio del download dei video Instagram da main.py ##########################")
-    file_path = "instagram_urls.json"  # Percorso al file JSON
+    file_path = FileManager.INSTAGRAM_URLS  # Percorso al file JSON
 
     # 🔹 Numero di volte da eseguire il ciclo completo
     try:
