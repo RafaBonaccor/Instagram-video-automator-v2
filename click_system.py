@@ -1190,13 +1190,40 @@ def main():
     p.add_argument("mode", choices=["record", "replay"], help="record o replay")
     p.add_argument("--file", default="actions.json", help="file JSON delle azioni")
     p.add_argument("--speed", type=float, default=1.0, help="velocità replay (2.0 = doppia)")
+    p.add_argument("--loop", type=int, default=None, help="numero di volte da ripetere il replay")
     args = p.parse_args()
 
     m = Macro(args.file)
     if args.mode == "record":
         m.record()
     else:
-        m.replay(speed=args.speed)
+        # Ask for loop count if not provided
+        if args.loop is None:
+            try:
+                loop_input = input("How many times do you want to replay? (default: 1): ").strip()
+                loop_count = int(loop_input) if loop_input else 1
+            except ValueError:
+                print("Invalid input, using default: 1")
+                loop_count = 1
+        else:
+            loop_count = args.loop
+        
+        # Run replay loop
+        for i in range(loop_count):
+            if loop_count > 1:
+                print(f"\n{'='*50}")
+                print(f"🔁 REPLAY {i+1} of {loop_count}")
+                print(f"{'='*50}\n")
+            m.replay(speed=args.speed)
+            
+            # Small pause between loops
+            if i < loop_count - 1:
+                print(f"\n⏸️ Pausing 2 seconds before next replay...\n")
+                import time
+                time.sleep(2)
+        
+        if loop_count > 1:
+            print(f"\n✅ Completed all {loop_count} replays!")
 
 if __name__ == "__main__":
     main()
